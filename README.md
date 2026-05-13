@@ -557,6 +557,7 @@ R : L'export CSV est disponible directement depuis la liste des factures avec fi
 
 ### v2.1 (Court terme)
 - [ ] **Upload de logo** sur les factures et devis (très demandé)
+- [ ] **Plusieurs banques, portefeuilles électroniques, espèces et plusieurs tirelires** pour gérer tous les revenus, les dépenses et les transactions entre eux (très demandé)
 - [ ] Envoi de factures/devis par e-mail depuis l'interface
 - [ ] Import relevé bancaire (CSV OCP, Attijariwafa, BMCE...)
 - [ ] Génération PDF côté serveur (Dompdf)
@@ -567,7 +568,6 @@ R : L'export CSV est disponible directement depuis la liste des factures avec fi
 - [ ] **Multi-utilisateurs** (comptable en lecture seule, collaborateur)
 - [ ] API REST complète (pour intégration avec d'autres outils)
 - [ ] Notifications e-mail automatiques (relances, échéances déclaration)
-- [ ] Intégration Simpl-AE / Damancom (pré-remplissage formulaire)
 
 ### Idées Communauté (Votes bienvenus)
 - [ ] Application mobile native (React Native / Flutter)
