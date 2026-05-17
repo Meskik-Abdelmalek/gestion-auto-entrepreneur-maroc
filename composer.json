@@ -1,0 +1,29 @@
+{
+    "name": "meskik-abdelmalek/gestion-auto-entrepreneur-maroc",
+    "description": "Système de facturation et gestion pour auto-entrepreneurs marocains",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Abdelmalek Meskik",
+            "email": "abdelmalek@meskik.com",
+            "homepage": "https://github.com/Meskik-Abdelmalek"
+        }
+    ],
+    "require": {
+        "php": ">=8.1",
+        "dompdf/dompdf": "^2.0",
+        "ext-pdo": "*",
+        "ext-mbstring": "*",
+        "ext-openssl": "*"
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "autoload": {
+        "files": []
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

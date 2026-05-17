@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────
+#  Gestion Auto-Entrepreneur Maroc — Apache Configuration
+#  Author : Abdelmalek Meskik <abdelmalek@meskik.com>
+# ─────────────────────────────────────────────────────────────
+
+Options -Indexes -MultiViews
+
+# ── HTTPS Redirect ──────────────────────────────────────────
+# Uncomment after installing your SSL certificate (Let's Encrypt)
+# <IfModule mod_rewrite.c>
+#   RewriteEngine On
+#   RewriteCond %{HTTPS} off
+#   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+# </IfModule>
+
+# ── Protect Sensitive Files ──────────────────────────────────
+<FilesMatch "^(config\.php|install\.lock|\.env)$">
+    Order deny,allow
+    Deny from all
+</FilesMatch>
+
+# ── Protect Sensitive Directories ───────────────────────────
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+
+    # Block direct access to includes/, sql/, storage/
+    RewriteRule ^(includes|sql|storage)/ - [F,L]
+
+    # Block dotfiles except .htaccess itself
+    RewriteRule (^|/)\.(?!htaccess) - [F,L]
+</IfModule>
+
+# ── Security Headers ────────────────────────────────────────
+<IfModule mod_headers.c>
+    # Prevent MIME-type sniffing
+    Header always set X-Content-Type-Options "nosniff"
+
+    # Deny framing from other origins
+    Header always set X-Frame-Options "SAMEORIGIN"
+
+    # Restrict referrer information
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+    # Permissions Policy — disable unused browser features
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+
+    # HSTS — enforce HTTPS for 1 year (uncomment once HTTPS is active)
+    # Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+    # Content Security Policy
+    # Allows Tailwind CDN + same-origin scripts/styles
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none';"
+
+    # Remove server signature from responses
+    Header unset X-Powered-By
+    Header always unset X-Powered-By
+</IfModule>
+
+# ── PHP Configuration ────────────────────────────────────────
+<IfModule mod_php.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+    php_value error_log /tmp/ae_maroc_error.log
+    php_flag session.cookie_httponly On
+    php_flag session.cookie_secure On
+    php_value session.cookie_samesite Strict
+</IfModule>
+
+# ── GZIP Compression ────────────────────────────────────────
+<IfModule mod_deflate.c>
+    AddOutputFilterByType DEFLATE text/html text/plain text/xml
+    AddOutputFilterByType DEFLATE text/css text/javascript
+    AddOutputFilterByType DEFLATE application/javascript application/x-javascript
+    AddOutputFilterByType DEFLATE application/json
+    AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+
+# ── Browser Cache ────────────────────────────────────────────
+<IfModule mod_expires.c>
+    ExpiresActive On
+
+    # Images
+    ExpiresByType image/png  "access plus 1 month"
+    ExpiresByType image/jpeg "access plus 1 month"
+    ExpiresByType image/gif  "access plus 1 month"
+    ExpiresByType image/svg+xml "access plus 1 month"
+    ExpiresByType image/x-icon  "access plus 1 year"
+
+    # CSS & JS (versioned via query string in app)
+    ExpiresByType text/css        "access plus 1 week"
+    ExpiresByType application/javascript "access plus 1 week"
+
+    # Web fonts
+    ExpiresByType font/woff2 "access plus 1 year"
+    ExpiresByType font/woff  "access plus 1 year"
+
+    # Manifests
+    ExpiresByType application/manifest+json "access plus 1 day"
+</IfModule>
+
+# ── Default Character Set ────────────────────────────────────
+AddDefaultCharset UTF-8

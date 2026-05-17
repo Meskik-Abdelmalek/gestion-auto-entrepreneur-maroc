@@ -1,4 +1,4 @@
-# 🇲🇦 Gestion Auto-Entrepreneur Maroc — Système de Facturation Complet v2.0
+# 🇲🇦 Gestion Auto-Entrepreneur Maroc — Système de Facturation Complet v2.1
 
 > **Logiciel open-source de facturation, devis, déclaration chiffre d'affaires Maroc et gestion complète pour Auto-Entrepreneurs marocains.**  
 > Construit en PHP 8 & Tailwind CSS. Hébergeable sur n'importe quel mutualisé ou VPS.
@@ -165,7 +165,8 @@ Ce système s'adresse à :
 | PHP | 8.1+ |
 | MySQL | 8.0+ (ou MariaDB 10.6+) |
 | Serveur web | Apache / Nginx / Caddy |
-| Extensions PHP | `pdo_mysql`, `mbstring`, `openssl` |
+| Extensions PHP | `pdo_mysql`, `mbstring`, `openssl`, `gd` |
+| Composer | 2.x (pour Dompdf — génération PDF) |
 
 ---
 
@@ -178,7 +179,10 @@ L'installateur **graphique en 4 étapes** crée la base de données, configure l
 git clone https://github.com/Meskik-Abdelmalek/gestion-auto-entrepreneur-maroc.git
 cd gestion-auto-entrepreneur-maroc
 
-# 2. Ouvrir l'installateur dans le navigateur
+# 2. Installer les dépendances (Dompdf pour la génération PDF)
+composer install --no-dev --optimize-autoloader
+
+# 3. Ouvrir l'installateur dans le navigateur
 # http://votre-domaine.com/install.php
 ```
 
@@ -190,7 +194,7 @@ cd gestion-auto-entrepreneur-maroc
 
 > ⚠️ **Sécurité critique : Supprimez `install.php`** immédiatement après installation !
 
-**Identifiants par défaut** : `admin` / `AEMaroc2026!` — **Changez-les immédiatement après connexion !**
+**Identifiants** : L'installateur génère un mot de passe aléatoire sécurisé affiché une seule fois à l'écran. Notez-le immédiatement — il ne peut pas être récupéré après.
 
 ---
 
@@ -201,15 +205,18 @@ cd gestion-auto-entrepreneur-maroc
 git clone https://github.com/Meskik-Abdelmalek/gestion-auto-entrepreneur-maroc.git
 cd gestion-auto-entrepreneur-maroc
 
-# 2. Créer la base de données et importer le schéma
+# 2. Installer les dépendances PHP (Dompdf pour la génération PDF)
+composer install --no-dev --optimize-autoloader
+
+# 3. Créer la base de données et importer le schéma
 mysql -u root -p -e "CREATE DATABASE ae_maroc CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 mysql -u root -p ae_maroc < sql/schema.sql
 
-# 3. Configurer la connexion
+# 4. Configurer la connexion
 cp config.example.php config.php
 nano config.php  # Renseignez vos credentials MySQL
 
-# 4. Lancer le serveur de développement local
+# 5. Lancer le serveur de développement local
 php -S localhost:8080
 ```
 
@@ -221,6 +228,9 @@ php -S localhost:8080
 # Lancer un conteneur PHP + Apache avec le code monté
 docker run -p 8080:80 -v $(pwd):/var/www/html php:8.1-apache
 
+# Installer les dépendances dans le conteneur
+docker exec <container_id> composer install --no-dev
+
 # Ou avec docker-compose (MySQL inclus) — voir docker-compose.yml
 docker-compose up -d
 ```
@@ -231,10 +241,14 @@ docker-compose up -d
 
 1. Téléchargez le `.zip` de la [dernière release](https://github.com/Meskik-Abdelmalek/gestion-auto-entrepreneur-maroc/releases)
 2. Uploadez dans `public_html` via le **Gestionnaire de Fichiers cPanel**
-3. Créez une base de données MySQL vide depuis cPanel → **Bases de données MySQL**
-4. Ouvrez `https://votre-domaine.com/install.php` dans le navigateur
-5. Suivez les 4 étapes de l'assistant
-6. ⚠️ **Supprimez `install.php`** depuis le gestionnaire de fichiers
+3. Depuis le **Terminal cPanel** (ou via SSH), installez les dépendances :
+   ```bash
+   cd public_html && composer install --no-dev --optimize-autoloader
+   ```
+4. Créez une base de données MySQL vide depuis cPanel → **Bases de données MySQL**
+5. Ouvrez `https://votre-domaine.com/install.php` dans le navigateur
+6. Suivez les 4 étapes de l'assistant
+7. ⚠️ **Supprimez `install.php`** depuis le gestionnaire de fichiers
 
 ---
 
@@ -247,10 +261,21 @@ server {
     root /var/www/gestion-ae-maroc;
     index index.php dashboard.php;
 
-    # Sécurité : bloquer includes/ et sql/
-    location ~* ^/(includes|sql)/ {
+    # Sécurité : bloquer les répertoires sensibles
+    location ~* ^/(includes|sql|storage)/ {
         deny all;
         return 404;
+    }
+
+    # Bloquer config.php et install.lock
+    location ~* ^/(config\.php|install\.lock|\.env) {
+        deny all;
+        return 404;
+    }
+
+    # Bloquer les dotfiles
+    location ~ /\. {
+        deny all;
     }
 
     # PHP-FPM
@@ -261,9 +286,10 @@ server {
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
     }
 
-    location ~ /\.ht {
-        deny all;
-    }
+    # En-têtes de sécurité
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+    add_header Referrer-Policy "strict-origin-when-cross-origin";
 }
 ```
 
@@ -350,16 +376,30 @@ gestion-auto-entrepreneur-maroc/
 ├── 📁 includes/                   ← Cœur de l'application
 │   ├── auth.php                   ← Authentification (bcrypt, sessions, remember-me)
 │   ├── functions.php              ← Helpers: stats, devis, exports, recherche
+│   ├── pdf.php                    ← Génération PDF via Dompdf
+│   ├── email.php                  ← Envoi d'e-mails (SMTP natif)
 │   ├── header.php                 ← Layout + auth guard + navigation principale
 │   └── footer.php                 ← JS global : dark mode, Ctrl+K, drawer mobile
 │
 ├── 📁 api/                        ← Endpoints JSON (appels AJAX)
 │   ├── invoices.php               ← CRUD factures (delete, mark_paid, duplicate, bulk)
 │   ├── quotes.php                 ← CRUD devis (convert, delete, duplicate)
+│   ├── pdf.php                    ← Génération et téléchargement PDF
+│   ├── send-email.php             ← Envoi de factures/devis par e-mail
 │   └── search.php                 ← Recherche globale — renvoie JSON
 │
 ├── 📁 sql/
-│   └── schema.sql                 ← 9 tables MySQL avec indexes optimisés
+│   ├── schema.sql                 ← Schéma complet (installation fraîche)
+│   └── migrate_v2.1_safe.sql     ← Migration sûre depuis v2.0
+│
+├── 📁 assets/                     ← Ressources statiques
+│   ├── icon-192.png               ← Icône PWA 192×192
+│   └── icon-512.png               ← Icône PWA 512×512
+│
+├── 📁 uploads/                    ← Fichiers uploadés (logos, imports)
+│   └── logos/                    ← Logos auto-entrepreneur
+│
+├── 📁 vendor/                     ← Dépendances Composer (Dompdf, auto-généré)
 │
 ├── dashboard.php                  ← Tableau de bord principal
 ├── invoices.php                   ← Liste factures (bulk, filtres, tri, CSV)
@@ -375,28 +415,35 @@ gestion-auto-entrepreneur-maroc/
 ├── declarations.php               ← Module IR trimestriel + CNSS
 ├── reminders.php                  ← Tracker des relances impayées
 ├── bank.php                       ← Rapprochement bancaire
+├── bank-accounts.php              ← Gestion des comptes bancaires
+├── bank-import.php                ← Import relevé bancaire CSV
 ├── report.php                     ← Rapport annuel complet
 ├── settings.php                   ← Paramètres profil + sécurité
 ├── login.php                      ← Page de connexion sécurisée
 ├── logout.php                     ← Déconnexion + invalidation session
 ├── install.php                    ← Installateur web 4 étapes (⚠️ à supprimer!)
 ├── config.php                     ← Configuration DB (généré par l'installateur)
-├── .htaccess                      ← Sécurité Apache + headers HTTP
+├── composer.json                  ← Dépendances PHP (Dompdf)
+├── .htaccess                      ← Sécurité Apache + headers HTTP + GZIP
 └── manifest.json                  ← PWA manifest
 ```
 
-### Schéma de la Base de Données (9 tables)
+### Schéma de la Base de Données (13 tables)
 
 ```sql
-users           -- Compte(s) admin + préférences
-clients         -- Annuaire clients
-invoices        -- Factures (header)
-invoice_items   -- Lignes de facture (détail)
-quotes          -- Devis (header)
-quote_items     -- Lignes de devis (détail)
-expenses        -- Dépenses et charges
-bank_entries    -- Transactions bancaires
-declarations    -- Historique des déclarations IR/CNSS
+ae_users             -- Compte admin + préférences + remember-me tokens
+ae_config            -- Configuration de l'application (SMTP, profil AE, taux IR)
+ae_clients           -- Annuaire clients
+ae_invoices          -- Factures (header)
+ae_invoice_lines     -- Lignes de facture (détail)
+ae_quotes            -- Devis (header)
+ae_quote_lines       -- Lignes de devis (détail)
+ae_expenses          -- Dépenses et charges
+ae_bank_accounts     -- Comptes bancaires (multi-comptes)
+ae_bank_transactions -- Transactions bancaires importées
+ae_bank_transfers    -- Virements inter-comptes
+ae_email_log         -- Journal des e-mails envoyés
+ae_csv_imports       -- Audit des imports CSV bancaires
 ```
 
 ---
@@ -424,15 +471,17 @@ La sécurité est une priorité absolue pour un logiciel qui gère des **donnée
 # 1. Supprimer l'installateur
 rm install.php
 
-# 2. Changer le mot de passe admin par défaut
-# → Paramètres → Sécurité → Changer mot de passe
-
-# 3. Vérifier les permissions des fichiers
+# 2. Vérifier les permissions des fichiers
 chmod 600 config.php
 chmod 750 includes/ sql/
 
-# 4. Activer HTTPS (certificat Let's Encrypt gratuit)
-certbot --nginx -d votre-domaine.com
+# 3. Activer HTTPS (certificat Let's Encrypt gratuit)
+certbot --apache -d votre-domaine.com
+# Puis décommenter la ligne RewriteRule HTTPS dans .htaccess
+# et décommenter l'en-tête Strict-Transport-Security
+
+# 4. Changer le mot de passe admin
+# → Paramètres → Sécurité → Changer mot de passe
 ```
 
 ---
@@ -466,12 +515,14 @@ La conversion est **instantanée et complète** : toutes les lignes (désignatio
 
 ## ⚙️ Configuration `.htaccess` Apache
 
-Le fichier `.htaccess` fourni configure :
-- Redirection HTTPS automatique (à décommenter après installation du certificat SSL)
-- Protection des fichiers sensibles (`config.php`, `sql/`, `includes/`)
-- En-têtes de sécurité HTTP (CSP, HSTS, X-Frame-Options...)
-- Compression GZIP pour les assets statiques
-- Cache navigateur optimisé (CSS, JS, images)
+Le fichier `.htaccess` inclus dans le projet configure :
+- **Redirection HTTPS** automatique (ligne à décommenter après activation SSL)
+- **Protection des fichiers sensibles** — accès direct à `config.php`, `includes/`, `sql/` bloqué
+- **En-têtes de sécurité HTTP** — CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy
+- **HSTS** (HTTP Strict Transport Security) — ligne à décommenter une fois HTTPS actif
+- **Compression GZIP** pour HTML, CSS, JS, JSON via `mod_deflate`
+- **Cache navigateur optimisé** — images (1 mois), CSS/JS (1 semaine), fonts (1 an)
+- **Suppression de la signature serveur** (`X-Powered-By` retiré des réponses)
 
 ---
 
@@ -546,7 +597,7 @@ R : Oui. L'interface est **Mobile First** et installable comme une PWA (Progress
 R : Le système génère automatiquement les numéros au format `FAC-YYYYMM-NNN` (ex: `FAC-202605-042`). La numérotation est séquentielle et ne peut pas être dupliquée.
 
 **Q : Puis-je personnaliser le modèle de facture avec mon logo ?**  
-R : Pas encore dans la v2 — c'est une fonctionnalité très demandée, prévue dans la **v2.1** (voir Roadmap). Les factures affichent actuellement le nom et les informations de votre profil AE.
+R : Pas encore en v2.1 — c'est une fonctionnalité très demandée, prévue dans la prochaine version (voir Roadmap). Les factures affichent actuellement le nom et les informations de votre profil AE.
 
 **Q : Comment exporter mes factures pour mon comptable ?**  
 R : L'export CSV est disponible directement depuis la liste des factures avec filtres (période, statut, client). Chaque ligne de facture est détaillée.
@@ -555,12 +606,12 @@ R : L'export CSV est disponible directement depuis la liste des factures avec fi
 
 ## Roadmap
 
-### v2.1 (Court terme)
+### v2.1 (En cours)
+- [x] **Génération PDF côté serveur** via Dompdf (`composer install`)
+- [x] **Multi-comptes bancaires** — banques, portefeuilles électroniques, espèces
+- [x] **Import relevé bancaire** (CSV OCP, Attijariwafa, BMCE...)
+- [x] **Envoi de factures/devis par e-mail** depuis l'interface
 - [ ] **Upload de logo** sur les factures et devis (très demandé)
-- [ ] **Plusieurs banques, portefeuilles électroniques, espèces et plusieurs tirelires** pour gérer tous les revenus, les dépenses et les transactions entre eux (très demandé)
-- [ ] Envoi de factures/devis par e-mail depuis l'interface
-- [ ] Import relevé bancaire (CSV OCP, Attijariwafa, BMCE...)
-- [ ] Génération PDF côté serveur (Dompdf)
 - [ ] Mode multi-activités amélioré
 
 ### v3.0 (Moyen terme)
@@ -583,10 +634,13 @@ R : L'export CSV est disponible directement depuis la liste des factures avec fi
 
 Les contributions sont les bienvenues et encouragées ! Ce projet est **fait par et pour la communauté des auto-entrepreneurs marocains**.
 
+Mainteneur principal : **Abdelmalek Meskik** — [abdelmalek@meskik.com](mailto:abdelmalek@meskik.com)
+
 ```bash
 # Workflow standard
-git fork https://github.com/Meskik-Abdelmalek/gestion-auto-entrepreneur-maroc
-git clone https://github.com/VOTRE-USERNAME/gestion-auto-entrepreneur-maroc
+git clone https://github.com/Meskik-Abdelmalek/gestion-auto-entrepreneur-maroc
+cd gestion-auto-entrepreneur-maroc
+composer install
 git checkout -b feature/ma-nouvelle-fonctionnalite
 # ... vos modifications ...
 git commit -m "feat: ajouter X"
@@ -619,11 +673,12 @@ git push origin feature/ma-nouvelle-fonctionnalite
 
 ## 📊 Statistiques du Projet
 
-- **Langage principal :** PHP (Vanilla, pas de framework)
+- **Langage principal :** PHP 8.1+ (Vanilla, pas de framework)
 - **Frontend :** HTML5 + Tailwind CSS 3.x + SVG natif
 - **Base de données :** MySQL 8.0 / MariaDB 10.6
-- **Tables :** 9 tables relationnelles
-- **Pages :** 20+ modules fonctionnels
+- **Tables :** 13 tables relationnelles
+- **Pages :** 25+ modules fonctionnels
+- **Dépendances :** Dompdf via Composer (PDF serveur)
 - **Licence :** MIT (utilisation commerciale autorisée)
 
 ---
@@ -674,7 +729,7 @@ Voir le fichier [LICENSE](LICENSE) pour le texte complet.
 
 **Made with ❤️ for Moroccan Auto-Entrepreneurs**
 
-*Gestion Auto-Entrepreneur Maroc v2.0 · Open Source · MIT License*
+*Gestion Auto-Entrepreneur Maroc v2.1 · Open Source · MIT License*
 
 *Mots-clés : facture auto entrepreneur maroc · déclaration chiffre d'affaires maroc · auto-entrepreneur maroc · portail auto-entrepreneur · taxe professionnelle maroc · gestion ae · logiciel facturation maroc · simpl-ae · damancom · ir trimestriel maroc · cnss auto entrepreneur*
 
