@@ -3,6 +3,9 @@
 require_once __DIR__ . '/functions.php';
 requireAuth();
 
+// v2.1 — safe logo helpers (must load before getConfig is called)
+if (file_exists(__DIR__ . '/logo.php')) require_once __DIR__ . '/logo.php';
+
 $cfg         = getConfig();
 $pageName    = $pageName ?? 'Dashboard';
 $currentPage = basename($_SERVER['PHP_SELF'], '.php');
@@ -20,16 +23,17 @@ if (isset($_GET['export'])) {
 }
 
 $nav = [
-    ['id'=>'dashboard',    'label'=>'Dashboard',     'icon'=>'grid',        'href'=>'/dashboard.php'],
-    ['id'=>'invoices',     'label'=>'Factures',       'icon'=>'document',    'href'=>'/invoices.php'],
-    ['id'=>'quotes',       'label'=>'Devis',          'icon'=>'clipboard',   'href'=>'/quotes.php'],
-    ['id'=>'clients',      'label'=>'Clients',        'icon'=>'people',      'href'=>'/clients.php'],
-    ['id'=>'expenses',     'label'=>'Dépenses',       'icon'=>'money-off',   'href'=>'/expenses.php'],
-    ['id'=>'declarations', 'label'=>'Déclarations',   'icon'=>'calendar',    'href'=>'/declarations.php'],
-    ['id'=>'reminders',    'label'=>'Relances',       'icon'=>'alert-circle','href'=>'/reminders.php'],
-    ['id'=>'bank',         'label'=>'Banque',         'icon'=>'bank',        'href'=>'/bank.php'],
-    ['id'=>'report',       'label'=>'Rapport',        'icon'=>'chart',       'href'=>'/report.php'],
-    ['id'=>'settings',     'label'=>'Paramètres',     'icon'=>'settings',    'href'=>'/settings.php'],
+    ['id'=>'dashboard',     'label'=>'Dashboard',     'icon'=>'grid',        'href'=>'/dashboard.php'],
+    ['id'=>'invoices',      'label'=>'Factures',       'icon'=>'document',    'href'=>'/invoices.php'],
+    ['id'=>'quotes',        'label'=>'Devis',          'icon'=>'clipboard',   'href'=>'/quotes.php'],
+    ['id'=>'clients',       'label'=>'Clients',        'icon'=>'people',      'href'=>'/clients.php'],
+    ['id'=>'expenses',      'label'=>'Dépenses',       'icon'=>'money-off',   'href'=>'/expenses.php'],
+    ['id'=>'declarations',  'label'=>'Déclarations',   'icon'=>'calendar',    'href'=>'/declarations.php'],
+    ['id'=>'reminders',     'label'=>'Relances',       'icon'=>'alert-circle','href'=>'/reminders.php'],
+    ['id'=>'bank-accounts', 'label'=>'Comptes',        'icon'=>'wallet',      'href'=>'/bank-accounts.php', 'badge'=>'v2.1'],
+    ['id'=>'bank',          'label'=>'Mouvements',     'icon'=>'bank',        'href'=>'/bank.php'],
+    ['id'=>'report',        'label'=>'Rapport',        'icon'=>'chart',       'href'=>'/report.php'],
+    ['id'=>'settings',      'label'=>'Paramètres',     'icon'=>'settings',    'href'=>'/settings.php'],
 ];
 
 function navSvg(string $icon): string {
@@ -42,6 +46,7 @@ function navSvg(string $icon): string {
         'calendar'     => '<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
         'alert-circle' => '<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>',
         'bank'         => '<line x1="3" y1="22" x2="21" y2="22"/><line x1="6" y1="18" x2="6" y2="11"/><line x1="10" y1="18" x2="10" y2="11"/><line x1="14" y1="18" x2="14" y2="11"/><line x1="18" y1="18" x2="18" y2="11"/><polygon points="12 2 20 7 4 7"/>',
+        'wallet'       => '<path d="M21 12V7a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5z"/><path d="M16 12h4"/><circle cx="17" cy="12" r="1"/>',
         'chart'        => '<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
         'settings'     => '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
         default        => '<circle cx="12" cy="12" r="10"/>',
@@ -130,17 +135,26 @@ function navSvg(string $icon): string {
 
     <!-- Brand -->
     <div class="flex items-center gap-3 h-16 px-4 border-b border-fluent-n5 dark:border-white/10 flex-shrink-0">
+        <?php
+        $_sidebarLogo = function_exists('getLogoPath') ? getLogoPath() : null;
+        $_sidebarLogoOk = $_sidebarLogo && function_exists('logoExistsOnDisk') && logoExistsOnDisk($_sidebarLogo);
+        if ($_sidebarLogoOk): ?>
+        <img src="<?= h($_sidebarLogo) ?>?v=<?= time() ?>"
+            alt="Logo" class="w-9 h-9 rounded-xl object-contain bg-white p-0.5 shadow-f flex-shrink-0">
+        <?php else: ?>
         <div class="w-9 h-9 rounded-xl bg-fluent-blue flex items-center justify-center shadow-f flex-shrink-0">
             <span class="text-white font-bold text-sm">AE</span>
         </div>
-        <div class="min-w-0">
+        <?php endif; ?>
+        <div class="min-w-0 flex-1">
             <div class="font-bold text-sm text-fluent-neutral truncate"><?= h($cfg['owner_name'] ?: 'Moroccan AE') ?></div>
             <?php if ($activities): ?>
             <div class="text-[10px] text-fluent-n3 truncate"><?= h($activities[0]) ?></div>
             <?php else: ?>
-            <div class="text-[10px] text-fluent-n3">Auto-Entrepreneur</div>
+            <div class="text-[10px] text-fluent-n3">Auto-Entrepreneur v2.1</div>
             <?php endif; ?>
         </div>
+        <span class="text-[9px] font-bold text-fluent-blue bg-fluent-blue-lt dark:bg-fluent-blue/20 px-1.5 py-0.5 rounded flex-shrink-0">v2.1</span>
     </div>
 
     <!-- Quick search -->
@@ -169,7 +183,9 @@ function navSvg(string $icon): string {
                 <?= navSvg($item['icon']) ?>
             </svg>
             <span class="flex-1"><?= h($item['label']) ?></span>
-            <?php if ($overdueCount > 0): ?>
+            <?php if (!empty($item['badge'])): ?>
+            <span class="text-[9px] font-bold text-white bg-fluent-blue px-1.5 py-0.5 rounded"><?= h($item['badge']) ?></span>
+            <?php elseif ($overdueCount > 0): ?>
             <span class="text-[10px] bg-fluent-red text-white px-1.5 py-0.5 rounded-full font-bold"><?= $overdueCount ?></span>
             <?php elseif ($pendingQuotes > 0): ?>
             <span class="text-[10px] bg-fluent-blue text-white px-1.5 py-0.5 rounded-full font-bold"><?= $pendingQuotes ?></span>

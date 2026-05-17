@@ -1,318 +1,412 @@
 <?php
 require_once __DIR__ . '/includes/functions.php';
+require_once __DIR__ . '/includes/multi_activity.php';
 $pageName = 'Dashboard';
-$stats    = getDashboardStats();
+$db       = getDB();
 $cfg      = getConfig();
+$stats    = getDashboardStats();
 $overdue  = getOverdueInvoices();
 $activity = getActivityFeed(6);
 $s        = $stats;
 $rev      = $s['revenue'];
+$fy       = (int)($s['fy'] ?? date('Y'));
 $mn       = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-require_once __DIR__ . '/includes/header.php';
 
-// SVG chart data
-$maxV = max(array_map(fn($m) => (float)$m['paid'], $s['monthly'])) ?: 1;
+// v2.1 — Multi-activity + bank accounts
+$actData   = getMultiActivityDashboardData($fy);
+$plafonds  = getPlafondStatus($fy);
+
+// v2.1 — Bank accounts with balances
+$bankAccts = [];
+try {
+    $acRows = $db->query("SELECT * FROM ae_bank_accounts WHERE is_active=1 ORDER BY sort_order,id")->fetchAll();
+    foreach ($acRows as $ac) {
+        $bal = $db->prepare("SELECT COALESCE(SUM(credit),0)-COALESCE(SUM(debit),0) FROM ae_bank_transactions WHERE account_id=?");
+        $bal->execute([$ac['id']]);
+        $ac['balance'] = (float)$ac['opening_balance'] + (float)$bal->fetchColumn();
+        $bankAccts[] = $ac;
+    }
+} catch (\Throwable) {}
+$totalBankBalance = array_sum(array_column($bankAccts, 'balance'));
+
+$maxV   = max(array_map(fn($m) => (float)$m['paid'], $s['monthly'])) ?: 1;
+$curMth = (int)date('n');
+
+require_once __DIR__ . '/includes/header.php';
 
 function trendBadge(array $t): string {
     if ($t['pct'] === null) return '';
-    $cls   = $t['dir']==='up' ? 'text-fluent-green bg-fluent-green-lt' : 'text-fluent-red bg-fluent-red-lt';
-    $arrow = $t['dir']==='up' ? '↑' : '↓';
-    return "<span class='text-[10px] font-semibold px-1.5 py-0.5 rounded-full $cls'>$arrow {$t['pct']}%</span>";
+    $up  = $t['dir'] === 'up';
+    $cls = $up ? 'text-fluent-green bg-fluent-green-lt dark:bg-green-900/30' : 'text-fluent-red bg-fluent-red-lt dark:bg-red-900/30';
+    return "<span class='text-[10px] font-semibold px-1.5 py-0.5 rounded-full {$cls}'>" . ($up?'↑':'↓') . " {$t['pct']}%</span>";
 }
 ?>
 
-<!-- KPI row -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- KPI ROW                                                     -->
+<!-- ═══════════════════════════════════════════════════════════ -->
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
 
     <!-- CA Total -->
-    <div class="col-span-2 lg:col-span-1 bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+    <div class="col-span-2 lg:col-span-1 bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5 relative overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-br from-fluent-blue/5 to-transparent pointer-events-none"></div>
         <div class="flex items-start justify-between mb-3">
-            <div class="w-10 h-10 rounded-xl bg-fluent-blue-lt dark:bg-fluent-blue/20 flex items-center justify-center text-fluent-blue font-bold text-sm">₵</div>
-            <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-fluent-n6 dark:bg-white/10 text-fluent-n3"><?= $s['fy'] ?></span>
+            <div class="w-10 h-10 rounded-xl bg-fluent-blue-lt dark:bg-fluent-blue/20 flex items-center justify-center">
+                <svg class="w-5 h-5 text-fluent-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+            </div>
+            <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-fluent-n6 dark:bg-white/10 text-fluent-n3"><?= $fy ?></span>
         </div>
         <div class="text-2xl font-bold text-fluent-neutral leading-none"><?= money($rev['total_paid']) ?></div>
-        <div class="text-xs text-fluent-n3 mt-1">CA Encaissé total</div>
-        <div class="mt-2 flex items-center gap-2 text-xs">
+        <div class="text-xs text-fluent-n3 mt-1">CA Encaissé</div>
+        <div class="mt-2 flex items-center gap-2 flex-wrap">
             <?= trendBadge($s['revTrend']) ?>
-            <span class="text-fluent-n3">vs mois préc.</span>
+            <span class="text-xs text-fluent-n3">vs mois préc.</span>
         </div>
-        <div class="mt-2 flex items-center gap-3 text-xs text-fluent-n2">
+        <div class="mt-2 flex items-center gap-3 text-xs">
             <span class="text-fluent-green font-medium">✓ <?= $rev['count_paid'] ?> payées</span>
-            <span class="text-amber-500">⏳ <?= $rev['count_pending'] ?> att.</span>
+            <span class="text-amber-500">⏳ <?= $rev['count_pending'] ?></span>
         </div>
     </div>
 
     <!-- Ce mois -->
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
         <div class="w-9 h-9 rounded-xl bg-blue-50 dark:bg-fluent-blue/20 flex items-center justify-center mb-3">
-            <svg class="w-4.5 h-4.5 text-fluent-blue w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <svg class="w-5 h-5 text-fluent-blue" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         </div>
         <div class="text-xl font-bold text-fluent-neutral"><?= money($s['thisMonthRev']) ?></div>
-        <div class="text-xs text-fluent-n3 mt-0.5">Ce mois</div>
+        <div class="text-xs text-fluent-n3 mt-0.5">Ce mois (<?= $mn[$curMth] ?>)</div>
         <div class="mt-2"><?= trendBadge($s['revTrend']) ?></div>
     </div>
 
-    <!-- IR + CNSS -->
+    <!-- IR dû -->
     <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
         <div class="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-900/30 flex items-center justify-center mb-3">
-            <span class="text-amber-600 font-bold text-sm">IR</span>
+            <span class="text-amber-600 font-black text-sm">IR</span>
         </div>
         <div class="text-xl font-bold text-fluent-neutral"><?= money($s['ir_due']) ?></div>
-        <div class="text-xs text-fluent-n3 mt-0.5">IR dû (estimé)</div>
-        <div class="text-xs text-fluent-green mt-2 font-medium">✓ Payé: <?= money($s['ir_paid']) ?></div>
-        <div class="text-xs text-fluent-n3 mt-0.5">CNSS: <?= money($s['cnss_due']) ?></div>
+        <div class="text-xs text-fluent-n3 mt-0.5">IR estimé <?= $fy ?></div>
+        <div class="text-[11px] text-fluent-green mt-2 font-medium">Payé : <?= money($s['ir_paid']) ?></div>
+        <div class="text-[11px] text-fluent-n3">CNSS : <?= money($s['cnss_due']) ?></div>
     </div>
 
-    <!-- Net -->
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
-        <div class="w-9 h-9 rounded-xl <?= $s['net']>=0?'bg-fluent-green-lt dark:bg-green-900/30':'bg-fluent-red-lt dark:bg-red-900/30' ?> flex items-center justify-center mb-3">
+    <!-- Résultat net -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5 relative overflow-hidden">
+        <div class="w-9 h-9 rounded-xl flex items-center justify-center mb-3 <?= $s['net']>=0?'bg-fluent-green-lt dark:bg-green-900/30':'bg-fluent-red-lt dark:bg-red-900/30' ?>">
             <svg class="w-5 h-5 <?= $s['net']>=0?'text-fluent-green':'text-fluent-red' ?>" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
         </div>
         <div class="text-xl font-bold <?= $s['net']>=0?'text-fluent-green':'text-fluent-red' ?>"><?= money($s['net']) ?></div>
         <div class="text-xs text-fluent-n3 mt-0.5">Résultat net</div>
-        <div class="text-xs text-fluent-n2 mt-2">Projection: <?= money($s['projection']) ?></div>
-        <div class="text-xs text-fluent-n3"><?= $s['unique_clients'] ?> client(s) actif(s)</div>
+        <div class="text-[11px] text-fluent-n2 mt-2">Projection : <?= money($s['projection']) ?></div>
+        <div class="text-[11px] text-fluent-n3"><?= $s['unique_clients'] ?> client(s) actif(s)</div>
     </div>
 </div>
 
-<!-- Main grid -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- v2.1 BANK ACCOUNTS STRIP                                    -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<?php if (!empty($bankAccts)): ?>
+<div class="mb-4">
+    <div class="flex items-center justify-between mb-2">
+        <h2 class="text-xs font-semibold text-fluent-n2 uppercase tracking-wider">Comptes & Soldes</h2>
+        <div class="flex items-center gap-2">
+            <span class="text-xs font-bold text-fluent-neutral">Total : <?= money($totalBankBalance) ?></span>
+            <a href="/bank-accounts.php" class="text-xs text-fluent-blue hover:underline">Gérer →</a>
+        </div>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-<?= min(count($bankAccts)+1, 5) ?> gap-3">
+        <?php foreach ($bankAccts as $ac): ?>
+        <a href="/bank.php?account=<?= $ac['id'] ?>"
+            class="btn-f bg-white dark:bg-gray-800 rounded-2xl shadow-f p-4 flex items-center gap-3 hover:shadow-fm relative overflow-hidden group">
+            <div class="absolute top-0 left-0 right-0 h-0.5 rounded-t-2xl" style="background:<?= h($ac['color']) ?>"></div>
+            <div class="w-9 h-9 rounded-xl flex items-center justify-center text-lg flex-shrink-0" style="background:<?= h($ac['color']) ?>22">
+                <?= $ac['type']==='cash'?'💵':($ac['type']==='ewallet'?'📱':'🏦') ?>
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="text-xs font-semibold text-fluent-neutral truncate"><?= h($ac['name']) ?></div>
+                <div class="text-sm font-bold <?= $ac['balance']>=0?'text-fluent-neutral':'text-fluent-red' ?> mt-0.5"><?= money($ac['balance']) ?></div>
+            </div>
+        </a>
+        <?php endforeach; ?>
+        <a href="/bank-accounts.php" class="btn-f bg-white dark:bg-gray-800 rounded-2xl shadow-f p-4 flex items-center gap-3 hover:shadow-fm border-2 border-dashed border-fluent-n4 dark:border-white/20 group">
+            <div class="w-9 h-9 rounded-xl bg-fluent-n6 dark:bg-white/10 flex items-center justify-center text-fluent-n3 flex-shrink-0 group-hover:bg-fluent-blue-lt group-hover:text-fluent-blue transition-colors">
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            </div>
+            <div>
+                <div class="text-xs font-medium text-fluent-n3 group-hover:text-fluent-blue">Ajouter un compte</div>
+                <div class="text-[10px] text-fluent-n4">banque, wallet, caisse</div>
+            </div>
+        </a>
+    </div>
+</div>
+<?php endif; ?>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- MAIN GRID                                                    -->
+<!-- ═══════════════════════════════════════════════════════════ -->
 <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
 
-    <!-- SVG Bar Chart -->
+    <!-- Bar Chart -->
     <div class="lg:col-span-2 bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
         <div class="flex items-center justify-between mb-4">
-            <h2 class="font-semibold text-sm text-fluent-neutral">CA Mensuel <?= $s['fy'] ?></h2>
-            <a href="/report.php?year=<?= $s['fy'] ?>" class="text-xs text-fluent-blue hover:underline">Rapport complet →</a>
+            <h2 class="font-semibold text-sm text-fluent-neutral">CA Mensuel <?= $fy ?></h2>
+            <a href="/report.php?year=<?= $fy ?>" class="btn-f text-xs text-fluent-blue hover:underline px-2 py-1 rounded-lg hover:bg-fluent-blue-lt">Rapport →</a>
         </div>
-        <!-- SVG chart -->
         <svg viewBox="0 0 640 160" xmlns="http://www.w3.org/2000/svg" class="w-full" style="height:140px">
             <?php
-            $chartW = 640; $chartH = 140; $padL = 0; $padR = 0; $padT = 12; $padB = 24;
-            $innerW = $chartW - $padL - $padR;
-            $innerH = $chartH - $padT - $padB;
-            $barW   = $innerW / 12;
-            $barGap = $barW * 0.22;
-            $actualBarW = $barW - $barGap;
-            $curM   = (int)date('n');
-
-            for ($m = 1; $m <= 12; $m++):
-                $val  = (float)$s['monthly'][$m]['paid'];
-                $pend = (float)$s['monthly'][$m]['pending'];
-                $pct  = $maxV > 0 ? $val / $maxV : 0;
-                $pPct = $maxV > 0 ? $pend / $maxV : 0;
-                $x    = $padL + ($m - 1) * $barW + $barGap / 2;
-                $barH = max(3, $pct * $innerH);
-                $y    = $padT + $innerH - $barH;
-                $isCur = $m === $curM;
-                $fill  = $isCur ? '#0078d4' : '#bfdbfe';
-                if ($val === 0.0 && $pend === 0.0) $fill = '#edebe9';
-                ?>
-                <g class="group">
-                    <rect x="<?= round($x,1) ?>" y="<?= round($padT,1) ?>" width="<?= round($actualBarW,1) ?>" height="<?= round($innerH,1) ?>" rx="4" fill="transparent"/>
-                    <?php if ($pend > 0): ?>
-                    <rect x="<?= round($x,1) ?>" y="<?= round($padT + $innerH - max(3,$pPct*$innerH),1) ?>" width="<?= round($actualBarW,1) ?>" height="<?= round(max(3,$pPct*$innerH),1) ?>" rx="3" fill="#fde68a" opacity="0.7"/>
-                    <?php endif; ?>
-                    <rect x="<?= round($x,1) ?>" y="<?= round($y,1) ?>" width="<?= round($actualBarW,1) ?>" height="<?= round($barH,1) ?>" rx="3" fill="<?= $fill ?>"/>
-                    <?php if ($val > 0): ?>
-                    <text x="<?= round($x + $actualBarW/2, 1) ?>" y="<?= round($y - 3, 1) ?>" text-anchor="middle" font-size="7" fill="#a19f9d" font-family="Segoe UI,sans-serif">
-                        <?= number_format($val/1000,0) ?>k
-                    </text>
-                    <?php endif; ?>
-                    <text x="<?= round($x + $actualBarW/2, 1) ?>" y="<?= $chartH - 6 ?>" text-anchor="middle" font-size="8"
-                        fill="<?= $isCur ? '#0078d4' : '#a19f9d' ?>"
-                        font-weight="<?= $isCur ? '700' : '400' ?>"
-                        font-family="Segoe UI,sans-serif">
-                        <?= $mn[$m] ?>
-                    </text>
-                </g>
+            $cW=$cH=0; $cW=640; $cH=140; $pL=0; $pR=0; $pT=12; $pB=24;
+            $iW=$cW-$pL-$pR; $iH=$cH-$pT-$pB;
+            $bW=$iW/12; $bG=$bW*.2; $aBW=$bW-$bG;
+            for ($m=1;$m<=12;$m++):
+                $val=(float)$s['monthly'][$m]['paid'];
+                $pend=(float)$s['monthly'][$m]['pending'];
+                $pct=$maxV>0?$val/$maxV:0;
+                $pPct=$maxV>0?min($pend/$maxV,1-$pct):0;
+                $x=$pL+($m-1)*$bW+$bG/2;
+                $barH=max(3,$pct*$iH);
+                $pBarH=max(0,$pPct*$iH);
+                $y=$pT+$iH-$barH;
+                $isCur=$m===$curMth;
+                $fill=$isCur?'#0078d4':'#c8e4f8';
+                $dFill=$isCur?'#5eb3f8':'#1a3550';
+            ?>
+            <?php if ($isCur): ?>
+            <rect x="<?= $x-2 ?>" y="<?= $pT-4 ?>" width="<?= $aBW+4 ?>" height="<?= $iH+4 ?>" rx="6" fill="#eff6fc" opacity=".6"/>
+            <?php endif; ?>
+            <?php if ($pBarH > 0): ?>
+            <rect x="<?= $x ?>" y="<?= $y-$pBarH ?>" width="<?= $aBW ?>" height="<?= $pBarH ?>" rx="3" fill="#fff4ce"/>
+            <?php endif; ?>
+            <rect x="<?= $x ?>" y="<?= $y ?>" width="<?= $aBW ?>" height="<?= $barH ?>" rx="3"
+                fill="<?= $fill ?>"
+                class="dark:fill-[<?= $dFill ?>]"/>
+            <?php if ($val > 0): ?>
+            <text x="<?= $x+$aBW/2 ?>" y="<?= $y-3 ?>" text-anchor="middle" font-size="7" fill="#605e5c"><?= number_format($val/1000,1) ?>k</text>
+            <?php endif; ?>
+            <text x="<?= $x+$aBW/2 ?>" y="<?= $pT+$iH+14 ?>" text-anchor="middle" font-size="8"
+                fill="<?= $isCur?'#0078d4':'#a19f9d' ?>" font-weight="<?= $isCur?'700':'400' ?>">
+                <?= $mn[$m] ?>
+            </text>
             <?php endfor; ?>
         </svg>
-
         <div class="flex items-center gap-4 mt-2 text-xs text-fluent-n3">
-            <span class="flex items-center gap-1"><span class="w-3 h-2 rounded bg-fluent-blue inline-block"></span>Encaissé</span>
-            <span class="flex items-center gap-1"><span class="w-3 h-2 rounded bg-amber-200 inline-block"></span>En attente</span>
-            <span class="ml-auto font-medium text-fluent-n2">Moy: <?= money($rev['total_paid']/12) ?>/mois</span>
+            <div class="flex items-center gap-1.5"><div class="w-3 h-2 rounded bg-fluent-blue"></div> Encaissé</div>
+            <div class="flex items-center gap-1.5"><div class="w-3 h-2 rounded bg-amber-200"></div> En attente</div>
         </div>
     </div>
 
-    <!-- Ceiling gauges -->
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
-        <h2 class="font-semibold text-sm text-fluent-neutral mb-4">Plafonds AE <?= $s['fy'] ?></h2>
-
-        <?php
-        $gauges = [
-            ['Services','services_paid',$s['ceiling_svc'],$s['svc_pct'],'#0078d4'],
-            ['Commerce','commerce_paid',$s['ceiling_com'],$s['com_pct'],'#107c10'],
-        ];
-        foreach ($gauges as [$label,$key,$ceil,$pct,$color]):
-            $pctR = round($pct * 100, 1);
-            $barColor = $pct>=0.95?'#a4262c':($pct>=0.75?'#ca5010':$color);
-            $remaining = $ceil - $rev[$key];
-            $svgPct = min(100, $pctR);
-        ?>
-        <div class="mb-5">
-            <div class="flex items-center justify-between mb-2">
-                <span class="text-xs font-semibold text-fluent-n2"><?= $label ?></span>
-                <span class="text-xs font-bold" style="color:<?= $barColor ?>"><?= $pctR ?>%</span>
-            </div>
-            <!-- SVG arc gauge -->
-            <?php
-            $cx=60; $cy=54; $r=44; $sw=10;
-            $circumference = 2 * M_PI * $r;
-            $dashArray = $circumference;
-            $dashOffset = $circumference * (1 - $svgPct / 100);
-            $startAngle = -90; // top
+    <!-- Plafond + quick stats -->
+    <div class="space-y-3">
+        <!-- Plafond bars -->
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+            <h3 class="font-semibold text-sm text-fluent-neutral mb-3">Plafonds AE</h3>
+            <?php foreach ([['Service',$plafonds['Service'],'#0078d4'],['Commerce',$plafonds['Commerce'],'#107c10']] as [$cat,$pl,$color]):
+                $alertCls = $pl['alert']==='red'?'text-fluent-red':($pl['alert']==='orange'?'text-amber-600':($pl['alert']==='yellow'?'text-amber-500':'text-fluent-n3'));
+                $barColor = $pl['alert']==='red'?'#d13438':($pl['alert']==='orange'?'#f7630c':$color);
+                $pct = min(100, round($pl['pct']*100));
             ?>
-            <div class="flex items-center gap-4">
-                <svg width="80" height="80" viewBox="0 0 120 80">
-                    <!-- track -->
-                    <circle cx="60" cy="60" r="<?= $r ?>" fill="none" stroke="#edebe9" stroke-width="<?= $sw ?>"
-                        stroke-dasharray="<?= round($circumference/2,1) ?> <?= round($circumference/2,1) ?>"
-                        stroke-dashoffset="<?= round(-$circumference/4,1) ?>" transform="rotate(-180 60 60)"/>
-                    <!-- fill -->
-                    <?php if ($svgPct > 0): ?>
-                    <circle cx="60" cy="60" r="<?= $r ?>" fill="none"
-                        stroke="<?= $barColor ?>" stroke-width="<?= $sw ?>" stroke-linecap="round"
-                        stroke-dasharray="<?= round($svgPct/100 * $circumference/2, 1) ?> <?= round($circumference,1) ?>"
-                        stroke-dashoffset="<?= round(-$circumference/4,1) ?>" transform="rotate(-180 60 60)"/>
-                    <?php endif; ?>
-                    <text x="60" y="58" text-anchor="middle" font-size="13" font-weight="700" fill="<?= $barColor ?>" font-family="Segoe UI,sans-serif"><?= $pctR ?>%</text>
-                </svg>
-                <div class="flex-1 min-w-0">
-                    <div class="text-xs text-fluent-n2 font-medium"><?= money($rev[$key]) ?></div>
-                    <div class="text-[10px] text-fluent-n3">sur <?= money($ceil) ?></div>
-                    <div class="text-[10px] mt-1 font-semibold <?= $pct>=0.95?'text-fluent-red':($pct>=0.75?'text-amber-500':'text-fluent-green') ?>">
-                        <?= money(max(0,$remaining)) ?> restant
-                    </div>
+            <div class="mb-4 last:mb-0">
+                <div class="flex items-center justify-between mb-1.5">
+                    <span class="text-xs font-medium text-fluent-n2"><?= $cat ?></span>
+                    <span class="text-xs font-bold <?= $alertCls ?>"><?= $pct ?>%</span>
                 </div>
+                <div class="h-2 bg-fluent-n5 dark:bg-white/10 rounded-full overflow-hidden">
+                    <div class="h-full rounded-full transition-all duration-700" style="width:<?= $pct ?>%;background:<?= $barColor ?>"></div>
+                </div>
+                <div class="flex justify-between mt-1 text-[10px] text-fluent-n3">
+                    <span><?= money($pl['paid']) ?></span>
+                    <span><?= money($pl['remaining']) ?> restant</span>
+                </div>
+                <?php if ($pl['alert'] !== 'normal'): ?>
+                <div class="mt-1.5 text-[10px] px-2 py-1 rounded-lg font-medium
+                    <?= $pl['alert']==='red'?'bg-fluent-red-lt text-fluent-red':($pl['alert']==='orange'?'bg-amber-50 text-amber-700':'bg-amber-50 text-amber-600') ?>">
+                    <?= $pl['alert']==='red'?'🚨 Plafond critique !':($pl['alert']==='orange'?'⚠️ Approche du plafond':'⚡ Surveiller') ?>
+                </div>
+                <?php endif; ?>
             </div>
+            <?php endforeach; ?>
         </div>
-        <?php endforeach; ?>
 
-        <!-- Next declaration -->
-        <div class="pt-3 border-t border-fluent-n5 dark:border-white/10">
-            <div class="text-xs text-fluent-n3 mb-0.5">Prochaine déclaration IR</div>
-            <div class="text-sm font-bold text-fluent-blue"><?= nextDeclarationDeadline() ?></div>
-            <?php $days = daysUntilDeclaration(); ?>
-            <div class="text-xs <?= $days<=15?'text-amber-500 font-semibold':'text-fluent-n3' ?> mt-0.5">
-                <?= $days ?> jours restants
+        <!-- Devis stats -->
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold text-sm text-fluent-neutral">Devis <?= $fy ?></h3>
+                <a href="/quotes.php" class="text-xs text-fluent-blue hover:underline">Voir →</a>
             </div>
-            <a href="/declarations.php" class="mt-2 inline-block text-xs text-fluent-blue hover:underline">Gérer →</a>
+            <?php
+            $qs = $s['quoteSt'];
+            $qItems = [['Brouillons','draft',$qs['draft']??0,'#a19f9d'],['Envoyés','sent',$qs['sent']??0,'#0078d4'],['Acceptés','accepted',$qs['accepted']??0,'#107c10']];
+            ?>
+            <div class="space-y-2">
+                <?php foreach ($qItems as [$label,$cls,$count,$color]): ?>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full" style="background:<?= $color ?>"></div>
+                        <span class="text-xs text-fluent-n2"><?= $label ?></span>
+                    </div>
+                    <span class="text-xs font-bold text-fluent-neutral"><?= $count ?></span>
+                </div>
+                <?php endforeach; ?>
+                <?php if (($qs['accepted_val']??0) > 0): ?>
+                <div class="pt-2 mt-1 border-t border-fluent-n5 dark:border-white/10 flex items-center justify-between">
+                    <span class="text-xs text-fluent-n3">Valeur acceptée</span>
+                    <span class="text-xs font-bold text-fluent-green"><?= money($qs['accepted_val']) ?></span>
+                </div>
+                <?php endif; ?>
+            </div>
         </div>
     </div>
 </div>
 
-<!-- Bottom row: recent invoices + activity + overdue -->
-<div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-
-    <!-- Recent invoices -->
-    <div class="lg:col-span-3 bg-white dark:bg-gray-800 rounded-2xl shadow-f overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-fluent-n5 dark:border-white/10">
-            <h2 class="font-semibold text-sm text-fluent-neutral">Dernières Factures</h2>
-            <a href="/invoices.php" class="text-xs text-fluent-blue hover:underline">Voir tout →</a>
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- v2.1 — MULTI-ACTIVITY BREAKDOWN                             -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<?php if (!empty($actData['activities'])): ?>
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="font-semibold text-sm text-fluent-neutral flex items-center gap-2">
+                <span class="w-6 h-6 bg-fluent-purple rounded-lg flex items-center justify-center text-white text-[10px] font-bold">AE</span>
+                Revenus par Activité
+            </h2>
+            <span class="text-[10px] font-bold text-white bg-fluent-purple px-2 py-0.5 rounded">v2.1</span>
         </div>
-        <?php
-        $recent = getDB()->query("SELECT * FROM ae_invoices ORDER BY created_at DESC LIMIT 7")->fetchAll();
-        if (empty($recent)): ?>
-        <div class="px-5 py-10 text-center">
-            <div class="text-4xl mb-2">📄</div>
-            <div class="text-sm text-fluent-n3 mb-3">Aucune facture pour l'instant</div>
-            <a href="/invoice-new.php" class="text-xs text-fluent-blue font-medium hover:underline">Créer votre première facture →</a>
+        <div class="space-y-3">
+            <?php foreach ($actData['activities'] as $act):
+                $total = $act['paid'] + $act['pending'];
+                $paidPct = $total > 0 ? round($act['paid']/$total*100) : 0;
+            ?>
+            <div class="p-3 bg-fluent-n7 dark:bg-white/5 rounded-xl">
+                <div class="flex items-center justify-between mb-2">
+                    <div>
+                        <div class="text-xs font-semibold text-fluent-neutral"><?= h($act['label']) ?></div>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded font-medium bg-fluent-blue-lt text-fluent-blue"><?= $act['category'] ?></span>
+                    </div>
+                    <div class="text-right">
+                        <div class="text-sm font-bold text-fluent-neutral"><?= money($act['paid']) ?></div>
+                        <div class="text-[10px] text-fluent-n3">IR : <?= money($act['ir']) ?></div>
+                    </div>
+                </div>
+                <?php if ($act['pending'] > 0): ?>
+                <div class="h-1.5 bg-fluent-n5 dark:bg-white/10 rounded-full overflow-hidden">
+                    <div class="h-full bg-fluent-blue rounded-full" style="width:<?= $paidPct ?>%"></div>
+                </div>
+                <div class="flex justify-between mt-1 text-[10px] text-fluent-n3">
+                    <span>Payé : <?= money($act['paid']) ?></span>
+                    <span>Att. : <?= money($act['pending']) ?></span>
+                </div>
+                <?php endif; ?>
+            </div>
+            <?php endforeach; ?>
+        </div>
+        <div class="mt-3 pt-3 border-t border-fluent-n5 dark:border-white/10 flex justify-between items-center">
+            <span class="text-xs text-fluent-n3">IR Total estimé</span>
+            <span class="font-bold text-sm text-fluent-neutral"><?= money($actData['total_ir']) ?></span>
+        </div>
+    </div>
+
+    <!-- Overdue invoices -->
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="font-semibold text-sm text-fluent-neutral flex items-center gap-2">
+                <?php if ($overdue): ?>
+                <span class="w-5 h-5 rounded-full bg-fluent-red flex items-center justify-center text-[10px] font-bold text-white"><?= count($overdue) ?></span>
+                <?php endif; ?>
+                Impayés en retard
+            </h2>
+            <?php if ($overdue): ?>
+            <a href="/reminders.php" class="text-xs text-fluent-red hover:underline font-medium">Relancer →</a>
+            <?php endif; ?>
+        </div>
+        <?php if (empty($overdue)): ?>
+        <div class="py-8 text-center">
+            <div class="text-4xl mb-2">✅</div>
+            <div class="text-sm font-medium text-fluent-neutral">Aucun impayé !</div>
+            <div class="text-xs text-fluent-n3 mt-1">Toutes vos factures sont à jour</div>
         </div>
         <?php else: ?>
-        <div class="divide-y divide-fluent-n6 dark:divide-white/5">
-            <?php foreach ($recent as $inv): ?>
-            <a href="/invoice-view.php?id=<?= $inv['id'] ?>"
-                class="flex items-center gap-3 px-5 py-3 hover:bg-fluent-n7 dark:hover:bg-white/5 transition-colors">
-                <div class="w-8 h-8 rounded-xl flex-shrink-0 flex items-center justify-center text-xs font-bold
-                    <?= $inv['status']==='Payé' ? 'bg-fluent-green-lt text-fluent-green' : ($inv['status']==='En attente' ? 'bg-amber-50 text-amber-600' : 'bg-fluent-red-lt text-fluent-red') ?>">
-                    <?= $inv['status']==='Payé' ? '✓' : ($inv['status']==='Annulé' ? '✕' : '…') ?>
+        <div class="space-y-2">
+            <?php foreach (array_slice($overdue,0,5) as $ov):
+                $days = (int)(date_diff(date_create($ov['invoice_date']),date_create())->days);
+            ?>
+            <div class="flex items-center gap-3 p-2.5 bg-red-50 dark:bg-red-900/10 rounded-xl">
+                <div class="w-8 h-8 rounded-lg bg-fluent-red-lt flex items-center justify-center flex-shrink-0">
+                    <span class="text-fluent-red text-xs font-bold"><?= $days ?>j</span>
                 </div>
                 <div class="flex-1 min-w-0">
-                    <div class="text-sm font-medium text-fluent-neutral truncate"><?= h($inv['client_name']) ?></div>
-                    <div class="text-xs text-fluent-n3"><?= h($inv['invoice_number']) ?> · <?= date('d/m/Y', strtotime($inv['invoice_date'])) ?></div>
+                    <a href="/invoice-view.php?id=<?= $ov['id'] ?>" class="text-xs font-semibold text-fluent-neutral hover:text-fluent-blue truncate block"><?= h($ov['client_name']) ?></a>
+                    <div class="text-[10px] text-fluent-n3"><?= h($ov['invoice_number']) ?></div>
                 </div>
-                <div class="text-right flex-shrink-0">
-                    <div class="text-sm font-semibold text-fluent-neutral"><?= money($inv['amount_ttc']) ?></div>
-                    <span class="text-[10px] font-medium px-1.5 py-0.5 rounded-full
-                        <?= $inv['status']==='Payé' ? 'badge-paid' : ($inv['status']==='En attente' ? 'badge-pending' : 'badge-cancelled') ?>">
-                        <?= h($inv['status']) ?>
-                    </span>
-                </div>
-            </a>
+                <div class="text-xs font-bold text-fluent-red flex-shrink-0"><?= money($ov['amount_ttc']) ?></div>
+            </div>
             <?php endforeach; ?>
         </div>
         <?php endif; ?>
     </div>
+</div>
+<?php endif; ?>
 
-    <!-- Right column: overdue + activity -->
-    <div class="lg:col-span-2 space-y-4">
+<!-- ═══════════════════════════════════════════════════════════ -->
+<!-- ACTIVITY FEED + QUICK ACTIONS                               -->
+<!-- ═══════════════════════════════════════════════════════════ -->
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <!-- Activity feed -->
+    <div class="lg:col-span-2 bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+        <h2 class="font-semibold text-sm text-fluent-neutral mb-4">Activité récente</h2>
+        <div class="space-y-0.5">
+            <?php if (empty($activity)): ?>
+            <div class="py-8 text-center text-xs text-fluent-n3">Aucune activité récente</div>
+            <?php else: foreach ($activity as $ev):
+                $icons = ['invoice_paid'=>'✅','invoice_created'=>'📄','quote_created'=>'📋','expense_added'=>'💸','client_added'=>'👤'];
+                $ico   = $icons[$ev['type']] ?? '•';
+            ?>
+            <div class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-fluent-n7 dark:hover:bg-white/5 transition-colors">
+                <span class="text-base flex-shrink-0 w-6 text-center"><?= $ico ?></span>
+                <div class="flex-1 min-w-0">
+                    <div class="text-xs font-medium text-fluent-neutral truncate"><?= h($ev['title']) ?></div>
+                    <div class="text-[10px] text-fluent-n3"><?= h($ev['subtitle']??'') ?></div>
+                </div>
+                <div class="text-[10px] text-fluent-n4 flex-shrink-0"><?= h($ev['date']??'') ?></div>
+            </div>
+            <?php endforeach; endif; ?>
+        </div>
+    </div>
 
-        <!-- Overdue -->
-        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f overflow-hidden">
-            <div class="flex items-center justify-between px-5 py-3.5 border-b border-fluent-n5 dark:border-white/10">
-                <h2 class="font-semibold text-sm text-fluent-neutral">Relances Urgentes</h2>
-                <?php if (count($overdue)): ?>
-                <span class="text-xs bg-fluent-red text-white px-2 py-0.5 rounded-full font-bold"><?= count($overdue) ?></span>
-                <?php endif; ?>
-            </div>
-            <?php if (empty($overdue)): ?>
-            <div class="px-5 py-6 text-center">
-                <div class="text-2xl mb-1">✅</div>
-                <div class="text-xs text-fluent-n3">Aucun impayé en retard</div>
-            </div>
-            <?php else: ?>
-            <div class="divide-y divide-fluent-n6 dark:divide-white/5 max-h-56 overflow-y-auto">
-                <?php foreach (array_slice($overdue, 0, 5) as $inv):
-                    $d = (int)$inv['days_overdue'];
-                    $cls = $d>60?'bg-fluent-red-lt text-fluent-red':($d>30?'bg-fluent-orange-lt text-fluent-orange':($d>15?'bg-amber-50 text-amber-600':'bg-fluent-green-lt text-fluent-green'));
+    <!-- Quick actions v2.1 -->
+    <div class="space-y-3">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f p-5">
+            <h3 class="font-semibold text-sm text-fluent-neutral mb-3">Actions rapides</h3>
+            <div class="space-y-2">
+                <?php
+                $quickActions = [
+                    ['/invoice-new.php',  '📄', 'Nouvelle facture',   'bg-fluent-blue text-white hover:bg-fluent-blue-dk', true],
+                    ['/quote-new.php',    '📋', 'Nouveau devis',      'bg-white dark:bg-gray-700 border border-fluent-n4 dark:border-white/20 text-fluent-n2 hover:bg-fluent-n6', false],
+                    ['/bank-import.php',  '📥', 'Importer relevé',   'bg-white dark:bg-gray-700 border border-fluent-n4 dark:border-white/20 text-fluent-n2 hover:bg-fluent-n6', false],
+                    ['/bank-accounts.php','🏦', 'Comptes bancaires', 'bg-white dark:bg-gray-700 border border-fluent-n4 dark:border-white/20 text-fluent-n2 hover:bg-fluent-n6', false],
+                    ['/declarations.php', '📊', 'Déclarations IR',   'bg-white dark:bg-gray-700 border border-fluent-n4 dark:border-white/20 text-fluent-n2 hover:bg-fluent-n6', false],
+                    ['/settings.php',     '⚙️', 'Paramètres v2.1',  'bg-white dark:bg-gray-700 border border-fluent-n4 dark:border-white/20 text-fluent-n2 hover:bg-fluent-n6', false],
+                ];
+                foreach ($quickActions as [$url,$ico,$lbl,$cls,$primary]):
                 ?>
-                <a href="/invoice-view.php?id=<?= $inv['id'] ?>" class="flex items-center gap-3 px-4 py-2.5 hover:bg-fluent-n7 dark:hover:bg-white/5 transition-colors">
-                    <div class="flex-1 min-w-0">
-                        <div class="text-xs font-semibold text-fluent-neutral truncate"><?= h($inv['client_name']) ?></div>
-                        <div class="text-[10px] text-fluent-n3"><?= h($inv['invoice_number']) ?></div>
-                    </div>
-                    <div class="text-right flex-shrink-0">
-                        <div class="text-xs font-semibold text-fluent-neutral"><?= money($inv['amount_ttc']) ?></div>
-                        <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold <?= $cls ?>"><?= $d ?>j</span>
-                    </div>
+                <a href="<?= $url ?>" class="btn-f flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium <?= $cls ?> shadow-f">
+                    <span class="text-base w-5 text-center"><?= $ico ?></span>
+                    <span><?= $lbl ?></span>
+                    <?php if ($primary): ?><span class="ml-auto text-xs opacity-70">→</span><?php endif; ?>
                 </a>
                 <?php endforeach; ?>
             </div>
-            <div class="px-5 py-2 border-t border-fluent-n5 dark:border-white/10">
-                <a href="/reminders.php" class="text-xs text-fluent-blue hover:underline">Toutes les relances →</a>
-            </div>
-            <?php endif; ?>
         </div>
 
-        <!-- Activity feed -->
-        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-f overflow-hidden">
-            <div class="px-5 py-3.5 border-b border-fluent-n5 dark:border-white/10">
-                <h2 class="font-semibold text-sm text-fluent-neutral">Activité Récente</h2>
-            </div>
-            <?php if (empty($activity)): ?>
-            <div class="px-5 py-6 text-center text-xs text-fluent-n3">Aucune activité</div>
-            <?php else: ?>
-            <div class="divide-y divide-fluent-n6 dark:divide-white/5">
-                <?php foreach ($activity as $a): ?>
-                <div class="flex items-center gap-3 px-4 py-2.5">
-                    <span class="text-base leading-none flex-shrink-0"><?= $a['t']==='invoice'?'📄':'💸' ?></span>
-                    <div class="flex-1 min-w-0">
-                        <div class="text-xs font-medium text-fluent-neutral truncate">
-                            <?= $a['t']==='invoice' ? h($a['client_name']) : h($a['client_name']) ?>
-                        </div>
-                        <div class="text-[10px] text-fluent-n3"><?= h($a['ref']) ?></div>
-                    </div>
-                    <div class="text-right flex-shrink-0">
-                        <div class="text-xs font-semibold <?= $a['t']==='expense'?'text-fluent-red':'text-fluent-neutral' ?>">
-                            <?= $a['t']==='expense'?'-':'' ?><?= money($a['amount_ttc']) ?>
-                        </div>
-                        <div class="text-[10px] text-fluent-n3"><?= timeAgo($a['created_at']) ?></div>
-                    </div>
-                </div>
-                <?php endforeach; ?>
-            </div>
-            <?php endif; ?>
+        <!-- v2.1 badge -->
+        <div class="bg-gradient-to-br from-fluent-blue to-blue-700 rounded-2xl p-4 text-white">
+            <div class="text-xs font-bold mb-1 opacity-80">🆕 Moroccan AE v2.1</div>
+            <div class="text-sm font-semibold mb-2">Nouvelles fonctionnalités actives</div>
+            <ul class="space-y-1 text-xs opacity-90">
+                <li>🖼️ Logo sur factures/devis</li>
+                <li>📧 Envoi email SMTP</li>
+                <li>🏦 Multi-comptes bancaires</li>
+                <li>📥 Import CSV 5 banques</li>
+                <li>📄 PDF serveur (Dompdf)</li>
+            </ul>
+            <a href="/settings.php#logo" class="mt-3 inline-block text-xs bg-white/20 hover:bg-white/30 px-3 py-1.5 rounded-lg">Configurer →</a>
         </div>
     </div>
 </div>

@@ -16,6 +16,26 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
+// ── Security headers (called once, early) ─────────────────────
+function sendSecurityHeaders(): void {
+    static $sent = false;
+    if ($sent || headers_sent()) return;
+    $sent = true;
+    header('X-Content-Type-Options: nosniff');
+    header('X-Frame-Options: SAMEORIGIN');
+    header('X-XSS-Protection: 1; mode=block');
+    header('Referrer-Policy: strict-origin-when-cross-origin');
+    // Permissive CSP: allow Tailwind CDN + same-origin everything else
+    header("Content-Security-Policy: default-src 'self'; "
+         . "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+         . "style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; "
+         . "img-src 'self' data: blob:; "
+         . "font-src 'self' data:; "
+         . "connect-src 'self'; "
+         . "frame-ancestors 'none';");
+}
+sendSecurityHeaders();
+
 define('AUTH_LOGIN_PAGE', '/login.php');
 define('MAX_LOGIN_ATTEMPTS', 5);
 define('LOCKOUT_MINUTES', 15);
@@ -197,13 +217,19 @@ function changePassword(int $userId, string $currentPw, string $newPw): array {
 }
 
 // ── First-run: create default admin if no users exist ─────────
-function ensureDefaultUser(): void {
-    $db = getDB();
+// Returns the temp password string when just created, empty string otherwise.
+// The password is random, stored in session, shown ONCE on login page.
+function ensureDefaultUser(): string {
+    $db    = getDB();
     $count = (int)$db->query("SELECT COUNT(*) FROM ae_users")->fetchColumn();
-    if ($count === 0) {
-        // Default credentials: admin / AEMaroc2026! — user MUST change on first login
-        $hash = password_hash('AEMaroc2026!', PASSWORD_DEFAULT);
-        $db->prepare("INSERT INTO ae_users (username, password_hash, email) VALUES (?,?,?)")
-           ->execute(['admin', $hash, '']);
+    if ($count > 0) return '';
+
+    // Generate random first-run password, kept in session until user logs in
+    if (empty($_SESSION['first_run_pw'])) {
+        $_SESSION['first_run_pw'] = 'AE-' . strtoupper(bin2hex(random_bytes(4)));
     }
+    $pw   = $_SESSION['first_run_pw'];
+    $hash = password_hash($pw, PASSWORD_DEFAULT);
+    $db->prepare("INSERT INTO ae_users (username, password_hash) VALUES (?,?)")->execute(['admin', $hash]);
+    return $pw;
 }

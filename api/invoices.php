@@ -1,7 +1,6 @@
 <?php
 require_once __DIR__ . '/../includes/functions.php';
 requireAuth();
-if (!isset($_SESSION)) session_start();
 
 $action = $_GET['action'] ?? $_POST['action'] ?? '';
 $db = getDB();

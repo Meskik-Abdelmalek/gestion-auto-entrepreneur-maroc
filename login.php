@@ -26,6 +26,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $result = attemptLogin($username, $password, $remember);
             if ($result['ok']) {
+                unset($_SESSION['first_run_pw']);
                 header('Location: ' . $redirect);
                 exit;
             }
@@ -40,7 +41,16 @@ if (empty($_SESSION['login_csrf'])) {
 }
 
 $cfg = [];
-try { $cfg = getDB()->query("SELECT owner_name FROM ae_config WHERE id=1")->fetch() ?: []; } catch (Throwable) {}
+$firstRunPw = '';
+try {
+    $cfg        = getDB()->query("SELECT owner_name FROM ae_config WHERE id=1")->fetch() ?: [];
+    $firstRunPw = ensureDefaultUser(); // '' if users already exist
+} catch (Throwable) {}
+
+// If user is brand new (first run), show the temp password
+// Once they log in, the session key is cleared
+$showFirstRun = !empty($firstRunPw) || !empty($_SESSION['first_run_pw']);
+$tempPw = $firstRunPw ?: ($_SESSION['first_run_pw'] ?? '');
 
 function clean(mixed $v): string { return trim((string)$v); }
 ?>
@@ -150,15 +160,25 @@ function clean(mixed $v): string { return trim((string)$v); }
                 </button>
             </form>
 
-            <!-- Info box -->
-            <div class="mt-6 p-3.5 bg-fluent-n7 rounded-xl border border-fluent-n5">
-                <p class="text-xs text-fluent-n2 font-medium mb-1">🔐 Première connexion ?</p>
-                <p class="text-[11px] text-fluent-n3 leading-relaxed">
-                    Identifiants par défaut&nbsp;: <code class="font-mono bg-white px-1 py-0.5 rounded text-fluent-neutral border border-fluent-n4">admin</code> /
-                    <code class="font-mono bg-white px-1 py-0.5 rounded text-fluent-neutral border border-fluent-n4">AEMaroc2026!</code><br>
-                    Changez-les immédiatement dans les <strong>Paramètres</strong>.
-                </p>
+            <!-- First-run info box (only shown when no users existed) -->
+            <?php if ($showFirstRun && $tempPw): ?>
+            <div class="mt-6 p-3.5 bg-amber-50 rounded-xl border border-amber-200">
+                <p class="text-xs text-amber-800 font-semibold mb-1.5">🔑 Première connexion — identifiants temporaires</p>
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="text-[11px] text-amber-700">Utilisateur :</span>
+                    <code class="font-mono bg-white px-2 py-0.5 rounded border border-amber-200 text-amber-900 text-xs">admin</code>
+                </div>
+                <div class="flex items-center gap-2 mb-2">
+                    <span class="text-[11px] text-amber-700">Mot de passe :</span>
+                    <code class="font-mono bg-white px-2 py-0.5 rounded border border-amber-200 text-amber-900 text-xs"><?= h($tempPw) ?></code>
+                </div>
+                <p class="text-[10px] text-amber-600 leading-relaxed">⚠️ Changez ce mot de passe immédiatement après connexion dans <strong>Paramètres → Sécurité</strong>. Ces identifiants disparaîtront après votre première connexion.</p>
             </div>
+            <?php else: ?>
+            <div class="mt-6 p-3 bg-fluent-n7 rounded-xl border border-fluent-n5 text-center">
+                <p class="text-[11px] text-fluent-n3">Moroccan AE System v2.1 · Open Source</p>
+            </div>
+            <?php endif; ?>
         </div>
 
         <!-- Footer -->

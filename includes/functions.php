@@ -340,17 +340,45 @@ function csrfToken(): string {
     return $_SESSION['csrf'];
 }
 function verifyCsrf(): void {
-    // Add $_GET['_csrf'] to the fallback chain
-    $token = $_POST['_csrf'] ?? $_GET['_csrf'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
-    if (!hash_equals($_SESSION['csrf'] ?? '', $token)) { 
-        http_response_code(403); 
-        die('CSRF validation failed'); 
+    // CSRF tokens must come from POST body or X-header only — never GET (Referer leakage risk)
+    $token = $_POST['_csrf'] ?? $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+    if (!$token || !hash_equals($_SESSION['csrf'] ?? '', $token)) {
+        http_response_code(403);
+        die('CSRF validation failed');
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────
-function h(mixed $v): string { return htmlspecialchars((string)$v, ENT_QUOTES, 'UTF-8'); }
-function clean(mixed $v): string { return trim((string)$v); }
+function h(mixed $v): string { return htmlspecialchars((string)$v, ENT_QUOTES | ENT_HTML5, 'UTF-8'); }
+
+// Basic trim — use for labels/descriptions where HTML chars are OK to store, escaped on output
+function clean(mixed $v, int $maxLen = 1000): string {
+    return mb_substr(trim((string)$v), 0, $maxLen, 'UTF-8');
+}
+
+// Strict sanitize — strip ALL tags, trim, enforce max length. Use for names, numbers, codes.
+function sanitize(mixed $v, int $maxLen = 255): string {
+    return mb_substr(trim(strip_tags((string)$v)), 0, $maxLen, 'UTF-8');
+}
+
+// Safe int — returns 0 for non-numeric, optionally clamped
+function sanitizeInt(mixed $v, int $min = PHP_INT_MIN, int $max = PHP_INT_MAX): int {
+    $i = (int)$v;
+    return max($min, min($max, $i));
+}
+
+// Safe float — returns 0.0 for non-numeric, optionally clamped to [0, ∞] by default
+function sanitizeFloat(mixed $v, float $min = 0.0, float $max = PHP_FLOAT_MAX): float {
+    $f = (float)$v;
+    if (!is_finite($f)) return $min;
+    return max($min, min($max, $f));
+}
+
+// Safe email — returns '' if invalid
+function sanitizeEmail(mixed $v): string {
+    $v = trim((string)$v);
+    return filter_var($v, FILTER_VALIDATE_EMAIL) ? strtolower($v) : '';
+}
 function timeAgo(string $dt): string {
     $d = time()-strtotime($dt);
     if ($d < 60) return "À l'instant";
